@@ -48,7 +48,7 @@ extern char *KQUEUE_DEBUG_IDENT;
 
 #define dbg_printf(fmt,...)     do {                                \
     if (DEBUG_KQUEUE)                                                      \
-      fprintf(stderr, "%s [%d]: %s(): "fmt"\n",                     \
+      fprintf(stderr, "%s [%d]: %s(): " fmt"\n",                     \
               KQUEUE_DEBUG_IDENT, THREAD_ID, __func__, __VA_ARGS__);       \
 } while (0)
 

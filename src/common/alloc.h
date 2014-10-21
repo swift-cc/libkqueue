@@ -34,29 +34,36 @@
  */
 
 #include <stdlib.h>
+#include "config.h"
+#ifdef __ANDROID__
+#include "../posix/tls.h"
+#endif
 
 #ifndef _WIN32
 # include <unistd.h>
 #endif
 
-static __thread struct {
+struct MA {
     void  **ac_cache;       /* An array of reusable memory objects */
     size_t  ac_count;       /* The number of objects in the cache */
     size_t  ac_max;         /* The maximum number of cached objects */
     size_t  ac_size;        /* The size, in bytes, of each object */
-} _ma;
+};
+static TLS<MA> _gma;
 
 static inline int
 mem_init(size_t objsize, size_t cachesize)
 {
+    MA& _ma = _gma.get();
     _ma.ac_size = objsize;
-    _ma.ac_cache = malloc(cachesize * sizeof(void *));
+    _ma.ac_cache = (void**)malloc(cachesize * sizeof(void *));
     return (_ma.ac_cache == NULL ? -1 : 0);
 }
 
 static inline void *
 mem_alloc(void)
 {
+    MA& _ma = _gma.get();
     if (_ma.ac_count > 0) 
         return (_ma.ac_cache[_ma.ac_count--]);
     else 
@@ -66,6 +73,7 @@ mem_alloc(void)
 static inline void *
 mem_calloc(void)
 {
+    MA& _ma = _gma.get();
     void *p;
 
     p = mem_alloc();
@@ -77,6 +85,7 @@ mem_calloc(void)
 static inline void
 mem_free(void *ptr)
 {
+    MA& _ma = _gma.get();
     if (_ma.ac_count < _ma.ac_max)
         _ma.ac_cache[_ma.ac_count++] = ptr;
     else 

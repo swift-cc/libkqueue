@@ -36,6 +36,7 @@ knote_cmp(struct knote *a, struct knote *b)
     return memcmp(&a->kev.ident, &b->kev.ident, sizeof(a->kev.ident)); 
 }
 
+RB_HEAD(knt, knote);
 RB_GENERATE(knt, knote, kn_entries, knote_cmp)
 
 struct knote *
@@ -43,7 +44,7 @@ knote_new(void)
 {
 	struct knote *res;
 
-    res = calloc(1, sizeof(struct knote));
+    res = (knote*)calloc(1, sizeof(struct knote));
 	if (res == NULL)
         return (NULL);
 
@@ -121,7 +122,7 @@ knote_lookup(struct filter *filt, uintptr_t ident)
     ent = RB_FIND(knt, &filt->kf_knote, &query);
     pthread_rwlock_unlock(&filt->kf_knote_mtx);
 
-    dbg_printf("id=%" PRIuPTR " ent=%p", ident, ent);
+    //dbg_printf("id=%p" PRIuPTR " ent=%p", ident, ent);
 
     return (ent);
 }

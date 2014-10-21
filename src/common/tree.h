@@ -721,9 +721,9 @@ name##_RB_MINMAX(struct name *head, int val)				\
 #define RB_NEGINF	-1
 #define RB_INF	1
 
-#define RB_INSERT(name, x, y)	name##_RB_INSERT(x, y)
-#define RB_REMOVE(name, x, y)	name##_RB_REMOVE(x, y)
-#define RB_FIND(name, x, y)	name##_RB_FIND(x, y)
+#define RB_INSERT(name, x, y)	name##_RB_INSERT(reinterpret_cast<struct name*>(x), y)
+#define RB_REMOVE(name, x, y)	name##_RB_REMOVE(reinterpret_cast<struct name*>(x), y)
+#define RB_FIND(name, x, y)	name##_RB_FIND(reinterpret_cast<struct name*>(x), y)
 #define RB_NFIND(name, x, y)	name##_RB_NFIND(x, y)
 #define RB_NEXT(name, x, y)	name##_RB_NEXT(y)
 #define RB_PREV(name, x, y)	name##_RB_PREV(y)

@@ -31,16 +31,21 @@
 static const char *
 kevent_filter_dump(const struct kevent *kev)
 {
+#ifdef SUPPORT_TLS__THREAD
     static __thread char buf[64];
 
     snprintf(&buf[0], sizeof(buf), "%d (%s)", 
             kev->filter, filter_name(kev->filter));
     return ((const char *) &buf[0]);
+#else 
+    return 0;
+#endif
 }
 
 static const char *
 kevent_fflags_dump(const struct kevent *kev)
 {
+#ifdef SUPPORT_TLS__THREAD
     static __thread char buf[1024];
 
 #define KEVFFL_DUMP(attrib) \
@@ -69,11 +74,15 @@ kevent_fflags_dump(const struct kevent *kev)
 #undef KEVFFL_DUMP
 
     return ((const char *) &buf[0]);
+#else 
+    return 0;
+#endif
 }
 
 static const char *
 kevent_flags_dump(const struct kevent *kev)
 {
+#ifdef SUPPORT_TLS__THREAD
     static __thread char buf[1024];
 
 #define KEVFL_DUMP(attrib) \
@@ -96,11 +105,15 @@ kevent_flags_dump(const struct kevent *kev)
 #undef KEVFL_DUMP
 
     return ((const char *) &buf[0]);
+#else 
+    return 0;
+#endif
 }
 
 const char *
 kevent_dump(const struct kevent *kev)
 {
+#ifdef SUPPORT_TLS__THREAD
     static __thread char buf[1024];
 
     snprintf((char *) &buf[0], sizeof(buf), 
@@ -113,6 +126,9 @@ kevent_dump(const struct kevent *kev)
             kev->udata);
 
     return ((const char *) &buf[0]);
+#else 
+    return 0;
+#endif
 }
 
 static int
