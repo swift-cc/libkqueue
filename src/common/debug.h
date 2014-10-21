@@ -26,7 +26,7 @@
 #endif
 
 extern int DEBUG_KQUEUE;
-extern char *KQUEUE_DEBUG_IDENT;
+extern const char *KQUEUE_DEBUG_IDENT;
 
 #if defined(__linux__)
 # include <sys/syscall.h>

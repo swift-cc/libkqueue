@@ -25,7 +25,7 @@
 #include "private.h"
 
 int DEBUG_KQUEUE = 0;
-char *KQUEUE_DEBUG_IDENT = "KQ";
+const char *KQUEUE_DEBUG_IDENT = "KQ";
 
 #ifdef _WIN32
 static LONG kq_init_begin = 0;
@@ -143,7 +143,7 @@ kqueue(void)
     (void) pthread_mutex_unlock(&kq_mtx);
 #endif
 
-    kq = calloc(1, sizeof(*kq));
+    kq = (struct kqueue *)calloc(1, sizeof(*kq));
     if (kq == NULL)
         return (-1);
 
@@ -156,7 +156,7 @@ kqueue(void)
 
     dbg_printf("created kqueue, fd=%d", kq->kq_id);
 
-    tmp = map_delete(kqmap, kq->kq_id);
+    tmp = (struct kqueue *)map_delete(kqmap, kq->kq_id);
     if (tmp != NULL) {
         dbg_puts("FIXME -- memory leak here");
         // TODO: kqops.kqueue_free(tmp), or (better yet) decrease it's refcount

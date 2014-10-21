@@ -27,8 +27,8 @@ all: libkqueue.a
 SOURCES = \
 	src/common/filter.c \
 	src/common/kevent.c \
-	src/common/knote.c
-	# src/common/kqueue.c \
+	src/common/knote.c \
+	src/common/kqueue.c
 	# src/common/map.c \
 	# src/linux/platform.c \
 	# src/linux/proc.c \
