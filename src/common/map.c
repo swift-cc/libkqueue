@@ -26,7 +26,7 @@ map_new(size_t len)
 {
     struct map *dst;
 
-    dst = calloc(1, sizeof(struct map));
+    dst = (struct map *)calloc(1, sizeof(struct map));
     if (dst == NULL)
         return (NULL);
 #ifdef _WIN32
@@ -38,7 +38,7 @@ map_new(size_t len)
 	}
 	dst->len = len;
 #else
-    dst->data = mmap(NULL, len * sizeof(void *), PROT_READ | PROT_WRITE, 
+    dst->data = (void**)mmap(NULL, len * sizeof(void *), PROT_READ | PROT_WRITE, 
             MAP_PRIVATE | MAP_NORESERVE | MAP_ANON, -1, 0);
     if (dst->data == MAP_FAILED) {
         dbg_perror("mmap(2)");

@@ -17,6 +17,7 @@
 # define _GNU_SOURCE
 # include <poll.h>
 #include "../common/private.h"
+#include "../posix/tls.h"
 
 //XXX-FIXME TEMP
 const struct filter evfilt_proc = EVFILT_NOTIMPL;
@@ -25,7 +26,7 @@ const struct filter evfilt_proc = EVFILT_NOTIMPL;
  * Per-thread epoll event buffer used to ferry data between
  * kevent_wait() and kevent_copyout().
  */
-static __thread struct epoll_event epevt[MAX_KEVENT];
+static TLS<epoll_event> epevt(MAX_KEVENT);
 
 const struct kqueue_vtable kqops = {
     linux_kqueue_init,
@@ -340,9 +341,10 @@ linux_get_descriptor_type(struct knote *kn)
     }
 }
 
-char *
+const char *
 epoll_event_dump(struct epoll_event *evt)
 {
+#if 0
     static __thread char buf[128];
 
     if (evt == NULL)
@@ -364,6 +366,8 @@ epoll_event_dump(struct epoll_event *evt)
 
     return (&buf[0]);
 #undef EPEVT_DUMP
+#endif
+    return "";
 }
 
 int

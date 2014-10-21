@@ -42,34 +42,41 @@ class TLS
 {
 public:
 
-	explicit TLS(size_t size = sizeof(T))
+	explicit TLS(size_t count = 1, size_t size = sizeof(T))
 		: _size(size)
+		, _count(count)
 		, _key()
 		, _key_once(PTHREAD_ONCE_INIT)
 	{
 	}
 
-	T& get()
+	T& get(const size_t ndx = 0)
 	{
 		auto destruct = [](void* value) { free(value); };
 		auto once = voidify([this, destruct]() { pthread_key_create(&this->_key, destruct); });
 	    pthread_once(&_key_once, (void(*)())once.get());
-        void* ptr;
-		if (0 == (ptr = pthread_getspecific(_key))) 
-        	ptr = malloc(_size);
-		return *static_cast<T*>(ptr);
+        T* ptr;
+		if (0 == (ptr = (T*)pthread_getspecific(_key))) 
+        	ptr = (T*)malloc(_size * _count);
+		return ptr[ndx];
 	}
 
-	void set(T& value)
+	void set(T& value, const size_t ndx = 0)
 	{
-		void* ptr = static_cast<void*>(get());
-  		memcpy(ptr, static_cast<void*>(value), _size);
+		T* ptr = &get(ndx);
+  		memcpy(ptr, &value, _size);
   		pthread_setspecific(_key, ptr);
     }
+
+	T& operator[] (const int ndx)
+	{
+	    return get(ndx);
+	}
 
 protected:
 
 	size_t _size;
+	size_t _count;
 	pthread_key_t _key;
 	pthread_once_t _key_once;
 };
