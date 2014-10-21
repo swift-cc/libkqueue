@@ -24,34 +24,30 @@
 #include <sys/types.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/filio.h>
 
 #include <port.h>
 
 #include "sys/event.h"
 #include "private.h"
 
-int
-evfilt_socket_knote_create(struct filter *filt, struct knote *kn)
+static int
+socket_knote_create(int port, int filter, int fd, void *udata)
 {
     int rv, events;
 
-    switch (kn->kev.filter) {
+    switch (filter) {
         case EVFILT_READ:
-            events = POLLIN;
-            break;
+                events = POLLIN;
+                break;
         case EVFILT_WRITE:
-            events = POLLOUT;
-            break;
+                events = POLLOUT;
+                break;
         default:
-            dbg_puts("invalid filter");
-            return (-1);
+                dbg_puts("invalid filter");
+                return (-1);
     }
-    
-    dbg_printf("port_associate kq fd %d with actual fd %ld", filter_epfd(filt), kn->kev.ident);
 
-    rv = port_associate(filter_epfd(filt), PORT_SOURCE_FD, kn->kev.ident, 
-            events, kn);
+    rv = port_associate(port, PORT_SOURCE_FD, fd, events, udata);
     if (rv < 0) {
             dbg_perror("port_associate(2)");
             return (-1);
@@ -60,87 +56,127 @@ evfilt_socket_knote_create(struct filter *filt, struct knote *kn)
     return (0);
 }
 
+static int
+socket_knote_delete(int port, int fd)
+{
+   if (port_dissociate(port, PORT_SOURCE_FD, fd) < 0) {
+            dbg_perror("port_dissociate(2)");
+            return (-1);
+   } else {
+	return (0);
+   }
+}
+   
+int
+evfilt_socket_init(struct filter *filt)
+{
+    return (0);
+}
+
+void
+evfilt_socket_destroy(struct filter *filt)
+{
+    ;
+}
+
+int
+evfilt_socket_knote_create(struct filter *filt, struct knote *kn)
+{
+    return socket_knote_create(filt->kf_kqueue->kq_port,
+		kn->kev.filter, kn->kev.ident, filt);
+}
+
 int
 evfilt_socket_knote_modify(struct filter *filt, struct knote *kn, 
         const struct kevent *kev)
 {
-    dbg_puts("XXX-FIXME");
-    (void)filt;
-    (void)kn;
-    (void)kev;
     return (-1); /* STUB */
 }
 
 int
 evfilt_socket_knote_delete(struct filter *filt, struct knote *kn)
 {
-    /* FIXME: should be handled at kevent_copyin()
     if (kn->kev.flags & EV_DISABLE)
         return (0);
-    */
-
-    if (port_dissociate(filter_epfd(filt), PORT_SOURCE_FD, kn->kev.ident) < 0) {
-        dbg_perror("port_dissociate(2)");
-        return (-1);
-    }
-
-    return (0);
+    else
+        return (socket_knote_delete(filt->kf_kqueue->kq_port, kn->kev.ident));
 }
 
 int
 evfilt_socket_knote_enable(struct filter *filt, struct knote *kn)
 {
-    dbg_printf("enabling knote %p", kn);
-    return evfilt_socket_knote_create(filt, kn);
+    return socket_knote_create(filt->kf_kqueue->kq_port,
+		kn->kev.filter, kn->kev.ident, filt);
 }
 
 int
 evfilt_socket_knote_disable(struct filter *filt, struct knote *kn)
 {
-    dbg_printf("disabling knote %p", kn);
-    return evfilt_socket_knote_delete(filt, kn);
+    return socket_knote_delete(filt->kf_kqueue->kq_port, kn->kev.ident);
 }
 
 int
-evfilt_socket_copyout(struct kevent *dst, struct knote *src, void *ptr)
+evfilt_socket_copyout(struct filter *filt, 
+            struct kevent *dst, 
+            int nevents)
 {
-    port_event_t *pe = (port_event_t *) ptr;
-    unsigned int pending_data = 0;
-    
-    memcpy(dst, &src->kev, sizeof(*dst));
+    port_event_t *pe = (port_event_t *) pthread_getspecific(filt->kf_kqueue->kq_port_event);
+    struct knote *kn;
+
+    kn = knote_lookup(filt, pe->portev_object);
+    if (kn == NULL)
+	return (-1);
+
+    memcpy(dst, &kn->kev, sizeof(*dst));
     if (pe->portev_events == 8) //XXX-FIXME Should be POLLHUP)
         dst->flags |= EV_EOF;
     else if (pe->portev_events & POLLERR)
         dst->fflags = 1; /* FIXME: Return the actual socket error */
-
-    if (pe->portev_events & POLLIN)
-    {
-        /* On return, data contains the number of bytes of protocol
-         data available to read / the length of the socket backlog. */
-
-        if (ioctl(pe->portev_object, FIONREAD, &pending_data) < 0)
-        {
-            /* race condition with socket close, so ignore this error */
-            dbg_puts("ioctl(2) of socket failed");
-            dst->data = 0;
-        }   
-        else
-            dst->data = pending_data;
+          
+    if (pe->portev_events & POLLIN) {
+        if (kn->flags & KNFL_PASSIVE_SOCKET) {
+            /* On return, data contains the length of the 
+               socket backlog. This is not available under Solaris (?).
+             */
+            dst->data = 1;
+        } else {
+            /* On return, data contains the number of bytes of protocol
+               data available to read.
+             */
+#if FIXME
+            if (ioctl(dst->ident, 
+                        (dst->filter == EVFILT_READ) ? SIOCINQ : SIOCOUTQ, 
+                        &dst->data) < 0) {
+                /* race condition with socket close, so ignore this error */
+                dbg_puts("ioctl(2) of socket failed");
+                dst->data = 0;
+            }
+#else
+            /* Workaround */
+            dst->data = 1;
+#endif
+        }
     }
-    
-    /* FIXME: make sure this is in kqops.copyout() 
-    if (src->kev.flags & EV_DISPATCH || src->kev.flags & EV_ONESHOT) {
+
+    if (kn->kev.flags & EV_DISPATCH) {
         socket_knote_delete(filt->kf_kqueue->kq_port, kn->kev.ident);
+        KNOTE_DISABLE(kn);
+    } else if (kn->kev.flags & EV_ONESHOT) {
+        socket_knote_delete(filt->kf_kqueue->kq_port, kn->kev.ident);
+        knote_free(filt, kn);
+    } else {
+	/* Solaris automatically disassociates a FD event after it
+	   is delivered. This effectively disables the knote. */
+        KNOTE_DISABLE(kn);
     }
-    */
 
-    return (0);
+    return (1);
 }
 
 const struct filter evfilt_read = {
     EVFILT_READ,
-    NULL,
-    NULL,
+    evfilt_socket_init,
+    evfilt_socket_destroy,
     evfilt_socket_copyout,
     evfilt_socket_knote_create,
     evfilt_socket_knote_modify,
@@ -151,8 +187,8 @@ const struct filter evfilt_read = {
 
 const struct filter evfilt_write = {
     EVFILT_WRITE,
-    NULL,
-    NULL,
+    evfilt_socket_init,
+    evfilt_socket_destroy,
     evfilt_socket_copyout,
     evfilt_socket_knote_create,
     evfilt_socket_knote_modify,

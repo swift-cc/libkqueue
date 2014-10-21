@@ -35,12 +35,9 @@
 #ifdef __KERNEL__
 #define intptr_t long
 #else
+#include <sys/queue.h> 
 #include <sys/types.h> 
-#if defined(_WIN32) && _MSC_VER < 1600 && !defined(__MINGW32__)
-# include "../../src/windows/stdint.h"
-#else
-# include <stdint.h>
-#endif
+#include <stdint.h> 
 #define LIBKQUEUE       1
 #endif
 
@@ -174,35 +171,10 @@ struct kevent {
 extern "C" {
 #endif
 
-#ifdef _WIN32
-
-struct timespec {
-    time_t  tv_sec;
-    long    tv_nsec;
-};
-
-__declspec(dllexport) int
-kqueue(void);
-
-__declspec(dllexport) int
-kevent(int kq, const struct kevent *changelist, int nchanges,
-	    struct kevent *eventlist, int nevents,
-	    const struct timespec *timeout);
-
-#ifdef MAKE_STATIC
-__declspec(dllexport) int
-libkqueue_init();
-#endif
-
-#else
 int     kqueue(void);
 int     kevent(int kq, const struct kevent *changelist, int nchanges,
 	    struct kevent *eventlist, int nevents,
 	    const struct timespec *timeout);
-#ifdef MAKE_STATIC
-int     libkqueue_init();
-#endif
-#endif
 
 #ifdef  __cplusplus
 }

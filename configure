@@ -1,0 +1,164 @@
+#!/usr/bin/env ruby
+#
+# vi: set filetype=ruby fileencoding=UTF-8 shiftwidth=2 tabstop=2 expandtab
+#
+# Copyright (c) 2012 Mark Heily <mark@heily.com>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+$VERBOSE = true
+$LOAD_PATH << 'makeconf'
+
+require 'makeconf'
+
+# Determine the list of compiler flags
+def get_cflags(cc)
+  cflags="-g -O2 -fpic -Wall -Werror -std=c99 -D_XOPEN_SOURCE=600 -D_BSD_SOURCE -I./include -Isrc/common".split(/ /) 
+
+  if Platform.is_solaris?
+    cflags.push "-D__EXTENSIONS__"
+  end
+  cflags
+end
+
+# Determine the list of source code files for libkqueue.so
+def get_source_list(cc)
+  src = %w{
+       src/common/filter.c 
+       src/common/knote.c 
+       src/common/kevent.c
+       src/common/kqueue.c
+  }
+
+  if Platform.is_solaris?
+    src.push 'src/solaris/kevent.c',
+             'src/solaris/timer.c'
+             'src/solaris/user.c'
+  end
+
+  if Platform.is_linux?
+    src.push 'src/posix/kevent.c',
+             'src/posix/signal.c',
+             'src/linux/proc.c',
+             'src/linux/socket.c',
+             'src/posix/user.c',
+             'src/linux/vnode.c',
+             'src/linux/eventfd.c'
+
+    # Android does not have timerfd support
+    if SystemType.host =~ /android/
+        src.push 'src/posix/timer.c'
+    else
+        src.push 'src/linux/timer.c'
+    end     
+  end
+
+  src
+end
+
+cc = CCompiler.new()
+
+project = Project.new(
+  :id => 'libkqueue',
+  :version => '1.0.7',
+  :cc => cc
+)
+
+project.add(
+  Library.new(
+      :id => 'libkqueue', 
+      :cflags => get_cflags(cc),
+      :sources => get_source_list(cc)
+  ),
+#  Header.new( :id => 'headers', :sources => %w{ Block.h Block_private.h } ),
+  Test.new(
+    :id => 'kqtest', 
+    :cflags => '-g -O0 -Wall -Werror -Iinclude',
+    :ldadd => "-lpthread -lrt",
+    :sources => %w{
+        test/main.c 
+        test/kevent.c
+        test/test.c
+        test/proc.c
+        test/read.c
+        test/signal.c
+        test/timer.c
+        test/vnode.c
+        test/user.c
+        },
+    :ldadd => %w{libkqueue.a -lpthread -lrt}
+  )
+)
+
+Makeconf.configure(project)
+
+
+#package:
+#    summary: "Blocks Runtime library"
+#    description: "Blocks Runtime library"
+#    license: LLVM
+#    author: "LLVM Development Team"
+
+
+__END__
+program="libkqueue"
+version="1.0.7"
+abi_major="0"
+abi_minor="0"
+abi_version="$abi_major.$abi_minor"
+cflags="-g -O2"
+ldflags=""
+sources="src/common/filter.c src/common/knote.c 
+         src/common/kevent.c src/common/kqueue.c" 
+libdepends=""
+deps="src/common/private.h"
+mans="kqueue.2"
+headers="src/common/private.h"
+extra_dist="*.in"
+subdirs="src include test"
+
+# Package metadata
+pkg_summary="Emulates the kqueue and kevent system calls"
+pkg_description="Emulates the kqueue and kevent system calls"
+license="BSD"
+author="Mark Heily"
+
+pre_configure_hook() {
+  cflags="-fpic -Wall -Werror -std=c99 -D_XOPEN_SOURCE=600 -D_BSD_SOURCE $cflags"
+  if [ "$debug" = "yes" ] ; then
+      cflags="$cflags -g3 -O0 -rdynamic"
+  fi
+
+  optional_headers="err.h"
+
+  libdepends=" -L$libdir"
+  if [ $target = "linux" ] ; then
+
+      check_symbol sys/epoll.h EPOLLRDHUP
+
+      # Actually a GCC 4.X dependency
+      cflags="$cflags -fvisibility=hidden"
+
+      libdepends="$libdepends -lpthread -lrt"
+      required_headers="sys/epoll.h sys/inotify.h"
+      optional_headers="sys/signalfd.h sys/timerfd.h sys/eventfd.h"
+  fi
+
+  if [ $target = "solaris" ] ; then
+      cflags="$cflags -m64"
+      ldflags="$ldflags -m64"
+      libdepends="$libdepends -lsocket -lnsl"
+  fi
+}
+

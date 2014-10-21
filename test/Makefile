@@ -14,48 +14,18 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
-tests=kqtest kqtest_debug lockstat static-lib-test
-
 include config.mk
 
-all: $(tests)
-
-lockstat: lockstat.c
-	$(CC) -o lockstat $(CFLAGS) lockstat.c $(LDADD)
+all: kqtest
 
 kqtest: $(SOURCES)
-	$(CC) -pg -o kqtest -DMAKE_STATIC=1 $(CFLAGS) $(SOURCES) ../libkqueue.a -lpthread
-
-kqtest_debug: $(SOURCES)
-	$(CC) -pg -o kqtest_debug -DMAKE_STATIC=1 $(CFLAGS) $(SOURCES) ../libkqueue_debug.a -lpthread
-
-static-lib-test: $(SOURCES)
-	$(CC) -o static-lib-test -DMAKE_STATIC=1 $(CFLAGS) $(SOURCES) ../libkqueue.a -lpthread
+	$(CC) -o kqtest $(CFLAGS) $(SOURCES) $(LDADD)
 
 check: kqtest
-	./kqtest $(KQTEST_OPTS)
-
-debug: kqtest
-	gdb ./kqtest $(KQTEST_OPTS)
+	./kqtest
 
 valgrind: kqtest
 	valgrind --tool=memcheck --leak-check=full --show-reachable=yes --num-callers=20 --track-fds=yes ./kqtest
-
-helgrind: kqtest
-	valgrind --tool=helgrind ./kqtest -c 25 -n 1
-
-callgrind: kqtest
-	rm -f callgrind.*
-	valgrind --tool=callgrind --branch-sim=yes ./kqtest || true
-	kcachegrind callgrind.*
-
-cachegrind: kqtest
-	rm -f cachegrind.*
-	valgrind --tool=cachegrind --branch-sim=yes ./kqtest || true
-	#CLI:
-	#cg_annotate cachegrind.*
-	#GUI:
-	kcachegrind
 
 check-installed:
 	$(CC) -o kqtest $(CFLAGS) $(SOURCES) $(LDADD) -lkqueue
@@ -74,5 +44,5 @@ edit:
 	$(EDITOR) *.[ch]
 
 clean:
-	rm -f *.o *.a $(tests)
+	rm -f *.o *.a kqtest
 	for x in libdispatch stress; do cd $$x && make clean && cd ..; done

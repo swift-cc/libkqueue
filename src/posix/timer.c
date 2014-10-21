@@ -125,7 +125,7 @@ sleeper_thread(void *arg)
             if (cnt < 0) {
                 /* FIXME: handle EAGAIN */
                 dbg_perror("write(2)");
-            } else if ((size_t)cnt < sizeof(si)) {
+            } else if (cnt < sizeof(si)) {
                 dbg_puts("FIXME: handle short write"); 
             } 
             cts = false;
@@ -145,7 +145,7 @@ _timer_create(struct filter *filt, struct knote *kn)
     struct sleepreq *req;
     kn->kev.flags |= EV_CLEAR;
 
-    req = malloc(sizeof(*req));
+    req = (struct sleepreq *)malloc(sizeof(*req));
     if (req == NULL) {
         dbg_perror("malloc");
         return (-1);
@@ -217,14 +217,13 @@ evfilt_timer_destroy(struct filter *filt)
 }
 
 int
-evfilt_timer_copyout(struct kevent *dst, struct knote *src, void *ptr UNUSED)
+evfilt_timer_copyout(struct filter *filt, 
+            struct kevent *dst, 
+            int nevents)
 {
-    struct filter *filt;
     struct sleepinfo    si;
     ssize_t       cnt;
     struct knote *kn;
-
-    filt = knote_get_filter(src);
 
     /* Read the ident */
     cnt = read(filt->kf_pfd, &si, sizeof(si));
@@ -234,7 +233,7 @@ evfilt_timer_copyout(struct kevent *dst, struct knote *src, void *ptr UNUSED)
         /* FIXME: handle EAGAIN */
         dbg_printf("read(2): %s", strerror(errno));
         return (-1);
-    } else if ((size_t)cnt < sizeof(si)) {
+    } else if (cnt < sizeof(si)) {
         dbg_puts("error: short read");
         return (-1);
     }
@@ -262,7 +261,6 @@ evfilt_timer_copyout(struct kevent *dst, struct knote *src, void *ptr UNUSED)
 
     dst->data = si.counter;
 
-#if DEADWOOD
     if (kn->kev.flags & EV_DISPATCH) {
         KNOTE_DISABLE(kn);
         _timer_delete(kn);
@@ -270,7 +268,6 @@ evfilt_timer_copyout(struct kevent *dst, struct knote *src, void *ptr UNUSED)
         _timer_delete(kn);
         knote_free(filt, kn);
     } 
-#endif
 
     return (1);
 }
@@ -285,16 +282,12 @@ int
 evfilt_timer_knote_modify(struct filter *filt, struct knote *kn, 
         const struct kevent *kev)
 {
-    (void) filt;
-    (void) kn;
-    (void) kev;
     return (-1); /* STUB */
 }
 
 int
 evfilt_timer_knote_delete(struct filter *filt, struct knote *kn)
 {
-    (void) filt;
     if (kn->kev.flags & EV_DISABLE)
         return (0);
 

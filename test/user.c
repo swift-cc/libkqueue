@@ -16,176 +16,155 @@
 
 #include "common.h"
 
+static int __thread kqfd;
+
 static void
-test_kevent_user_add_and_delete(struct test_context *ctx)
+test_kevent_user_add_and_delete(void)
 {
     struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ADD, 0, 0, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ADD, 0, 0, NULL);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_DELETE, 0, 0, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_DELETE, 0, 0, NULL);
+    test_no_kevents(kqfd);
 }
 
 static void
-test_kevent_user_get(struct test_context *ctx)
+test_kevent_user_get(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Add the event, and then trigger it */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);    
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);    
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);    
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);    
 
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
     kev.flags = EV_CLEAR;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 static void
-test_kevent_user_get_hires(struct test_context *ctx)
+test_kevent_user_disable_and_enable(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    /* Add the event, and then trigger it */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);    
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);    
-
-    kev.fflags &= ~NOTE_FFCTRLMASK;
-    kev.fflags &= ~NOTE_TRIGGER;
-    kev.flags = EV_CLEAR;
-    kevent_get_hires(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
-
-    test_no_kevents(ctx->kqfd);
-}
-
-static void
-test_kevent_user_disable_and_enable(struct test_context *ctx)
-{
-    struct kevent kev, ret;
-
-    test_no_kevents(ctx->kqfd);
-
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ADD, 0, 0, NULL); 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_DISABLE, 0, 0, NULL); 
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ADD, 0, 0, NULL); 
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_DISABLE, 0, 0, NULL); 
 
     /* Trigger the event, but since it is disabled, nothing will happen. */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); 
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); 
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ENABLE, 0, 0, NULL); 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); 
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ENABLE, 0, 0, NULL); 
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); 
 
     kev.flags = EV_CLEAR;
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 }
 
 static void
-test_kevent_user_oneshot(struct test_context *ctx)
+test_kevent_user_oneshot(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 2, EVFILT_USER, EV_ADD | EV_ONESHOT, 0, 0, NULL);
-    kevent_add(ctx->kqfd, &kev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);    
+    kevent_add(kqfd, &kev, 2, EVFILT_USER, EV_ADD | EV_ONESHOT, 0, 0, NULL);
+
+    puts("  -- event 1");
+    kevent_add(kqfd, &kev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);    
 
     kev.flags = EV_ONESHOT;
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 static void
-test_kevent_user_multi_trigger_merged(struct test_context *ctx)
+test_kevent_user_multi_trigger_merged(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
     int i;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 2, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
+    kevent_add(kqfd, &kev, 2, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
 
     for (i = 0; i < 10; i++)
-        kevent_add(ctx->kqfd, &kev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+        kevent_add(kqfd, &kev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
 
     kev.flags = EV_CLEAR;
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
-#ifdef EV_DISPATCH
+#if HAVE_EV_DISPATCH
 void
-test_kevent_user_dispatch(struct test_context *ctx)
+test_kevent_user_dispatch(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Add the event, and then trigger it */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ADD | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ADD | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
 
     /* Retrieve one event */
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
     kev.flags = EV_CLEAR;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Confirm that the knote is disabled automatically */
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Re-enable the kevent */
     /* FIXME- is EV_DISPATCH needed when rearming ? */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_ENABLE | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_ENABLE | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
+    test_no_kevents(kqfd);
 
     /* Trigger the event */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
     kev.fflags &= ~NOTE_FFCTRLMASK;
     kev.fflags &= ~NOTE_TRIGGER;
     kev.flags = EV_CLEAR;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
-    test_no_kevents(ctx->kqfd);
+    kevent_cmp(&kev, kevent_get(kqfd));
+    test_no_kevents(kqfd);
 
     /* Delete the watch */
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_USER, EV_DELETE, 0, 0, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 1, EVFILT_USER, EV_DELETE, 0, 0, NULL);
+    test_no_kevents(kqfd);
 }
-#endif 	/* EV_DISPATCH */
+#endif 	/* HAVE_EV_DISPATCH */
 
 void
-test_evfilt_user(struct test_context *ctx)
+test_evfilt_user(int _kqfd)
 {
-    test(kevent_user_add_and_delete, ctx);
-    test(kevent_user_get, ctx);
-    test(kevent_user_get_hires, ctx);
-    test(kevent_user_disable_and_enable, ctx);
-    test(kevent_user_oneshot, ctx);
-    test(kevent_user_multi_trigger_merged, ctx);
-#ifdef EV_DISPATCH
-    test(kevent_user_dispatch, ctx);
+    kqfd = _kqfd;
+
+    test(kevent_user_add_and_delete);
+    test(kevent_user_get);
+    test(kevent_user_disable_and_enable);
+    test(kevent_user_oneshot);
+    test(kevent_user_multi_trigger_merged);
+#if HAVE_EV_DISPATCH
+    test(kevent_user_dispatch);
 #endif
     /* TODO: try different fflags operations */
 }

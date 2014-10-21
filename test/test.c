@@ -19,14 +19,15 @@
 #endif
 #include <sys/types.h>
 #include <limits.h>
+#include <pthread.h>
 
 #include "common.h"
 
-static int testnum = 1;
-static int error_flag = 1;
+static int __thread testnum = 1;
+static int __thread error_flag = 1;
+static char __thread * cur_test_id = NULL;
 
 /* FIXME: not portable beyond linux */
-#ifndef _WIN32
 static void
 error_handler(int signum)
 {
@@ -41,13 +42,12 @@ error_handler(int signum)
 #endif
     exit(1);
 }
-#endif /* ! _WIN32 */
 
 static void
 testing_atexit(void)
 {
     if (error_flag) {
-        printf(" *** TEST FAILED ***\n");
+        printf(" *** TEST FAILED: %s\n", cur_test_id);
         //TODO: print detailed log
     } else {
         printf("\n---\n"
@@ -56,28 +56,29 @@ testing_atexit(void)
 }
 
 void
-test_begin(struct test_context *ctx, const char *func)
+test_begin(const char *func)
 {
-    if (ctx->cur_test_id)
-        free(ctx->cur_test_id);
-    ctx->cur_test_id = strdup(func);
+    if (cur_test_id)
+        free(cur_test_id);
+    cur_test_id = strdup(func);
 
-    printf("%d: %s\n", testnum++, ctx->cur_test_id);
+    printf("%d: %s\n", testnum++, cur_test_id);
     //TODO: redirect stdout/err to logfile
 }
 
 void
-test_end(struct test_context *ctx)
+test_end(void)
 {
-    free(ctx->cur_test_id);
-    ctx->cur_test_id = NULL;
+    free(cur_test_id);
+    cur_test_id = NULL;
 }
 
 void
 testing_begin(void)
 {
-#ifndef _WIN32
     struct sigaction sa;
+
+    atexit(testing_atexit);
 
     /* Install a signal handler for crashes and hangs */
     memset(&sa, 0, sizeof(sa));
@@ -86,10 +87,6 @@ testing_begin(void)
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
-#endif
-
-    atexit(testing_atexit);
-
 }
 
 void
@@ -102,11 +99,14 @@ testing_end(void)
 int
 testing_make_uid(void)
 {
+    static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
     static int id = 0;
 
+    pthread_mutex_lock(&mtx);
     if (id == INT_MAX)
         abort();
     id++;
-    
+    pthread_mutex_unlock(&mtx);
+
     return (id);
 }

@@ -727,8 +727,8 @@ name##_RB_MINMAX(struct name *head, int val)				\
 #define RB_NFIND(name, x, y)	name##_RB_NFIND(x, y)
 #define RB_NEXT(name, x, y)	name##_RB_NEXT(y)
 #define RB_PREV(name, x, y)	name##_RB_PREV(y)
-#define RB_MIN(name, x)		name##_RB_MINMAX(x, RB_NEGINF)
-#define RB_MAX(name, x)		name##_RB_MINMAX(x, RB_INF)
+#define RB_MIN(name, x)		name##_RB_MINMAX(reinterpret_cast<struct name*>(x), RB_NEGINF)
+#define RB_MAX(name, x)		name##_RB_MINMAX(reinterpret_cast<struct name*>(x), RB_INF)
 
 #define RB_FOREACH(x, name, head)					\
 	for ((x) = RB_MIN(name, head);					\

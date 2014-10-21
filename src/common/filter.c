@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
- 
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include "private.h"
 
 extern const struct filter evfilt_read;
@@ -46,12 +48,14 @@ filter_register(struct kqueue *kq, short filter, const struct filter *src)
     memcpy(dst, src, sizeof(*src));
     dst->kf_kqueue = kq;
     RB_INIT(&dst->kf_knote);
-    pthread_rwlock_init(&dst->kf_knote_mtx, NULL);
+    TAILQ_INIT(&dst->kf_event);
     if (src->kf_id == 0) {
         dbg_puts("filter is not implemented");
         return (0);
     }
 
+    assert(src->kf_init);
+    assert(src->kf_destroy);
     assert(src->kf_copyout);
     assert(src->kn_create);
     assert(src->kn_modify);
@@ -59,17 +63,13 @@ filter_register(struct kqueue *kq, short filter, const struct filter *src)
     assert(src->kn_enable);
     assert(src->kn_disable);
 
-    /* Perform (optional) per-filter initialization */
-    if (src->kf_init != NULL) {
-        rv = src->kf_init(dst);
-        if (rv < 0) {
-            dbg_puts("filter failed to initialize");
-            dst->kf_id = 0;
-            return (-1);
-        }
+    rv = src->kf_init(dst);
+    if (rv < 0) {
+        dbg_puts("filter failed to initialize");
+        dst->kf_id = 0;
+        return (-1);
     }
 
-#if DEADWOOD
     /* Add the filter's event descriptor to the main fdset */
     if (dst->kf_pfd > 0) {
         FD_SET(dst->kf_pfd, &kq->kq_fds);
@@ -78,12 +78,6 @@ filter_register(struct kqueue *kq, short filter, const struct filter *src)
         dbg_printf("fds: added %d (nfds=%d)", dst->kf_pfd, kq->kq_nfds);
     }
     dbg_printf("filter %d (%s) registered", filter, filter_name(filter));
-#endif
-
-	/* FIXME: should totally remove const from src */
-	if (kqops.filter_init != NULL
-            && kqops.filter_init(kq, dst) < 0)
-		return (-1);
 
     return (0);
 }
@@ -107,7 +101,6 @@ filter_register_all(struct kqueue *kq)
         filter_unregister_all(kq);
         return (-1);
     } else {
-        dbg_puts("complete");
         return (0);
     }
 }
@@ -124,14 +117,24 @@ filter_unregister_all(struct kqueue *kq)
         if (kq->kq_filt[i].kf_destroy != NULL) 
             kq->kq_filt[i].kf_destroy(&kq->kq_filt[i]);
 
-        //XXX-FIXME
-        //knote_free_all(&kq->kq_filt[i]);
-
-        if (kqops.filter_free != NULL)
-            kqops.filter_free(kq, &kq->kq_filt[i]);
-	}
+        knote_free_all(&kq->kq_filt[i]);
+    }
     memset(&kq->kq_filt[0], 0, sizeof(kq->kq_filt));
 }
+
+int 
+filter_socketpair(struct filter *filt)
+{
+    int sockfd[2];
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockfd) < 0)
+        return (-1);
+
+    fcntl(sockfd[0], F_SETFL, O_NONBLOCK);
+    filt->kf_wfd = sockfd[0];
+    filt->kf_pfd = sockfd[1];
+    return (0);
+} 
 
 int
 filter_lookup(struct filter **filt, struct kqueue *kq, short id)
@@ -144,7 +147,6 @@ filter_lookup(struct filter **filt, struct kqueue *kq, short id)
     }
     *filt = &kq->kq_filt[~id];
     if ((*filt)->kf_copyout == NULL) {
-        dbg_printf("filter %s is not implemented", filter_name(id));
         errno = ENOSYS;
         *filt = NULL;
         return (-1);
@@ -156,7 +158,7 @@ filter_lookup(struct filter **filt, struct kqueue *kq, short id)
 const char *
 filter_name(short filt)
 {
-    int id;
+    unsigned int id;
     const char *fname[EVFILT_SYSCOUNT] = {
         "EVFILT_READ",
         "EVFILT_WRITE",
@@ -172,8 +174,59 @@ filter_name(short filt)
     };
 
     id = ~filt;
-    if (id < 0 || id >= EVFILT_SYSCOUNT)
+    if (id >= EVFILT_SYSCOUNT)
         return "EVFILT_INVALID";
     else
         return fname[id];
+}
+
+int
+filter_raise(struct filter *filt)
+{
+    int rv = 0;
+
+    for (;;) {
+        if (write(filt->kf_wfd, " ", 1) < 0) {
+            if (errno == EINTR) {
+                rv = -EINTR;
+                continue;
+            }
+
+            if (errno != EAGAIN) {
+                dbg_printf("write(2): %s", strerror(errno));
+                /* TODO: set filter error flag */
+                rv = -1;
+                break;
+            }
+        }
+        break;
+    }
+
+    return (rv);
+}
+
+int
+filter_lower(struct filter *filt)
+{
+    char buf[1024];
+    int rv = 0;
+    ssize_t n;
+
+    for (;;) {
+        n = read(filt->kf_pfd, &buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) {
+                rv = -EINTR;
+                continue;
+            }
+            if (errno == EAGAIN) 
+                break;
+
+            dbg_printf("read(2): %s", strerror(errno));
+            return (-1);
+        }
+        break;
+    }
+
+    return (rv);
 }

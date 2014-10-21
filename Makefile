@@ -25,19 +25,16 @@
 all: libkqueue.a
 
 SOURCES = \
-	src/common/filter.c \
-	src/common/kevent.c \
 	src/common/knote.c \
-	src/common/kqueue.c
-	# src/common/map.c \
-	# src/linux/platform.c \
-	# src/linux/proc.c \
-	# src/linux/read.c \
-	# src/linux/signal.c \
-	# src/linux/timer.c \
-	# src/linux/user.c \
-	# src/linux/vnode.c \
-	# src/linux/write.c
+	src/common/keventcommon.c \
+	src/common/kqueue.c \
+	src/posix/kevent.c \
+	src/linux/proc.c \
+	src/linux/socket.c \
+	src/posix/user.c \
+	src/linux/vnode.c \
+	src/linux/eventfd.c \
+	src/posix/timer.c
 
 clean:
 	-rm -rf obj/*

@@ -16,155 +16,151 @@
 
 #include "common.h"
 
+static int __thread kqfd;
+
 void
-test_kevent_timer_add(struct test_context *ctx)
+test_kevent_timer_add(void)
 {
     struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_TIMER, EV_ADD, 0, 1000, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_TIMER, EV_ADD, 0, 1000, NULL);
 }
 
 void
-test_kevent_timer_del(struct test_context *ctx)
+test_kevent_timer_del(void)
 {
     struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 void
-test_kevent_timer_get(struct test_context *ctx)
+test_kevent_timer_get(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_TIMER, EV_ADD, 0, 1000, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_TIMER, EV_ADD, 0, 1000, NULL);
 
     kev.flags |= EV_CLEAR;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
-    kevent_add(ctx->kqfd, &kev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, 1, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
 }
 
 static void
-test_kevent_timer_oneshot(struct test_context *ctx)
+test_kevent_timer_oneshot(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 2, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 500,NULL);
+    kevent_add(kqfd, &kev, 2, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 500,NULL);
 
     /* Retrieve the event */
     kev.flags = EV_ADD | EV_CLEAR | EV_ONESHOT;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Check if the event occurs again */
     sleep(3);
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 static void
-test_kevent_timer_periodic(struct test_context *ctx)
+test_kevent_timer_periodic(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 3, EVFILT_TIMER, EV_ADD, 0, 1000,NULL);
+    kevent_add(kqfd, &kev, 3, EVFILT_TIMER, EV_ADD, 0, 1000,NULL);
 
     /* Retrieve the event */
     kev.flags = EV_ADD | EV_CLEAR;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Check if the event occurs again */
     sleep(1);
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Delete the event */
     kev.flags = EV_DELETE;
-    kevent_update(ctx->kqfd, &kev);
+    kevent_update(kqfd, &kev);
 }
 
 static void
-test_kevent_timer_disable_and_enable(struct test_context *ctx)
+test_kevent_timer_disable_and_enable(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Add the watch and immediately disable it */
-    kevent_add(ctx->kqfd, &kev, 4, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 2000,NULL);
+    kevent_add(kqfd, &kev, 4, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 2000,NULL);
     kev.flags = EV_DISABLE;
-    kevent_update(ctx->kqfd, &kev);
-    test_no_kevents(ctx->kqfd);
+    kevent_update(kqfd, &kev);
+    test_no_kevents(kqfd);
 
     /* Re-enable and check again */
     kev.flags = EV_ENABLE;
-    kevent_update(ctx->kqfd, &kev);
+    kevent_update(kqfd, &kev);
 
     kev.flags = EV_ADD | EV_CLEAR | EV_ONESHOT;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 }
 
-#ifdef EV_DISPATCH
+#if HAVE_EV_DISPATCH
 void
-test_kevent_timer_dispatch(struct test_context *ctx)
+test_kevent_timer_dispatch(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, 4, EVFILT_TIMER, EV_ADD | EV_DISPATCH, 0, 800, NULL);
+    kevent_add(kqfd, &kev, 4, EVFILT_TIMER, EV_ADD | EV_DISPATCH, 0, 800, NULL);
 
     /* Get one event */
     kev.flags = EV_ADD | EV_CLEAR | EV_DISPATCH;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Confirm that the knote is disabled */
     sleep(1);
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Enable the knote and make sure no events are pending */
-    kevent_add(ctx->kqfd, &kev, 4, EVFILT_TIMER, EV_ENABLE | EV_DISPATCH, 0, 800, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, 4, EVFILT_TIMER, EV_ENABLE | EV_DISPATCH, 0, 800, NULL);
+    test_no_kevents(kqfd);
 
     /* Get the next event */
     sleep(1);
     kev.flags = EV_ADD | EV_CLEAR | EV_DISPATCH;
     kev.data = 1; 
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Remove the knote and ensure the event no longer fires */
-    kevent_add(ctx->kqfd, &kev, 4, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, 4, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
     sleep(1);
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
-#endif  /* EV_DISPATCH */
+#endif  /* HAVE_EV_DISPATCH */
 
 void
-test_evfilt_timer(struct test_context *ctx)
+test_evfilt_timer(int _kqfd)
 {
-    test(kevent_timer_add, ctx);
-    test(kevent_timer_del, ctx);
-    test(kevent_timer_get, ctx);
-    test(kevent_timer_oneshot, ctx);
-    test(kevent_timer_periodic, ctx);
-    test(kevent_timer_disable_and_enable, ctx);
-#ifdef EV_DISPATCH
-    test(kevent_timer_dispatch, ctx);
+	kqfd = _kqfd;
+    test(kevent_timer_add);
+    test(kevent_timer_del);
+    test(kevent_timer_get);
+    test(kevent_timer_oneshot);
+    test(kevent_timer_periodic);
+    test(kevent_timer_disable_and_enable);
+#if HAVE_EV_DISPATCH
+    test(kevent_timer_dispatch);
 #endif
 }

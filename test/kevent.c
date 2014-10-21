@@ -20,7 +20,7 @@ extern int kqfd;
 
 /* Checks if any events are pending, which is an error. */
 void 
-_test_no_kevents(int kqfd, const char *file, int line)
+test_no_kevents(int kqfd)
 {
     int nfds;
     struct timespec timeo;
@@ -29,43 +29,25 @@ _test_no_kevents(int kqfd, const char *file, int line)
     memset(&timeo, 0, sizeof(timeo));
     nfds = kevent(kqfd, NULL, 0, &kev, 1, &timeo);
     if (nfds < 0)
-        err(1, "kevent(2)");
+        die("kevent(2)");
     if (nfds > 0) {
-        printf("\n[%s:%d]: Unexpected event:", file, line);
-        err(1, kevent_to_str(&kev));
+        puts("\nUnexpected event:");
+        die(kevent_to_str(&kev));
     }
 }
 
 /* Retrieve a single kevent */
-void
-kevent_get(struct kevent *kev, int kqfd)
-{
-    struct kevent buf;
-    int nfds;
-
-    if (kev == NULL)
-       kev = &buf;
-
-    nfds = kevent(kqfd, NULL, 0, kev, 1, NULL);
-    if (nfds < 1)
-        err(1, "kevent(2)");
-}
-
-/* In Linux, a kevent() call with less than 1ms resolution
-   will perform a pselect() call to obtain the higer resolution.
-   This test exercises that codepath.
- */
-void
-kevent_get_hires(struct kevent *kev, int kqfd)
+struct kevent *
+kevent_get(int kqfd)
 {
     int nfds;
-    struct timespec timeo;
+    static struct kevent __thread kev;
 
-    timeo.tv_sec = 0;
-    timeo.tv_nsec = 500000;
-    nfds = kevent(kqfd, NULL, 0, kev, 1, &timeo);
+    nfds = kevent(kqfd, NULL, 0, &kev, 1, NULL);
     if (nfds < 1)
         die("kevent(2)");
+
+    return (&kev);
 }
 
 char *
@@ -125,10 +107,10 @@ kevent_flags_dump(struct kevent *kev)
     KEVFL_DUMP(EV_CLEAR);
     KEVFL_DUMP(EV_EOF);
     KEVFL_DUMP(EV_ERROR);
-#ifdef EV_DISPATCH
+#if HAVE_EV_DISPATCH
     KEVFL_DUMP(EV_DISPATCH);
 #endif
-#ifdef EV_RECEIPT
+#if HAVE_EV_RECEIPT
     KEVFL_DUMP(EV_RECEIPT);
 #endif
     buf[strlen(buf) - 1] = ')';
@@ -182,7 +164,7 @@ kevent_add(int kqfd, struct kevent *kev,
 }
 
 void
-_kevent_cmp(struct kevent *k1, struct kevent *k2, const char *file, int line)
+kevent_cmp(struct kevent *k1, struct kevent *k2)
 {
 /* XXX-
    Workaround for inconsistent implementation of kevent(2) 
@@ -192,8 +174,8 @@ _kevent_cmp(struct kevent *k1, struct kevent *k2, const char *file, int line)
         k2->flags |= EV_ADD;
 #endif
     if (memcmp(k1, k2, sizeof(*k1)) != 0) {
-        printf("[%s:%d]: kevent_cmp() failed:\n  expected %s\n  but got  %s\n", 
-              file, line, kevent_to_str(k1), kevent_to_str(k2));
+        printf("kevent_cmp: mismatch:\n  expected %s\n  but got  %s\n", 
+              kevent_to_str(k1), kevent_to_str(k2));
         abort();
     }
 }

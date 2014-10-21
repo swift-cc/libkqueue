@@ -22,9 +22,7 @@
 const struct filter evfilt_proc = EVFILT_NOTIMPL;
 
 int
-posix_kevent_wait(
-        struct kqueue *kq, 
-        const struct timespec *timeout)
+kevent_wait(struct kqueue *kq, const struct timespec *timeout)
 {
     int n, nfds;
     fd_set rfds;
@@ -33,15 +31,16 @@ posix_kevent_wait(
     rfds = kq->kq_fds;
 
     dbg_puts("waiting for events");
+    kqueue_unlock(kq);
+
     n = pselect(nfds, &rfds, NULL , NULL, timeout, NULL);
+
     if (n < 0) {
-        if (errno == EINTR) {
-            dbg_puts("signal caught");
-            return (-1);
-        }
         dbg_perror("pselect(2)");
-        return (-1);
+        if (errno == EINTR)
+            n = -EINTR;
     }
+    kqueue_lock(kq);
 
     kq->kq_rfds = rfds;
 
@@ -49,7 +48,7 @@ posix_kevent_wait(
 }
 
 int
-posix_kevent_copyout(struct kqueue *kq, int nready,
+kevent_copyout(struct kqueue *kq, int nready,
         struct kevent *eventlist, int nevents)
 {
     struct filter *filt;

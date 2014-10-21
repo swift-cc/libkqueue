@@ -14,70 +14,100 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <errno.h>
+#include <err.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/queue.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <limits.h>
+#include <sys/inotify.h>
+#include <sys/epoll.h>
+
+#include "sys/event.h"
 #include "private.h"
 
-#ifndef NDEBUG
-static char *
+static const char *
 inotify_mask_dump(uint32_t mask)
 {
-    static __thread char buf[1024];
+//     static char __thread buf[1024];
 
-#define INEVT_MASK_DUMP(attrib) \
-    if (mask & attrib) \
-       strcat(buf, #attrib" ");
+// #define INEVT_MASK_DUMP(attrib) \
+//     if (mask & attrib) \
+//        strcat(buf, #attrib" ");
 
-    snprintf(buf, sizeof(buf), "mask = %d (", mask);
-    INEVT_MASK_DUMP(IN_ACCESS);
-    INEVT_MASK_DUMP(IN_MODIFY);
-    INEVT_MASK_DUMP(IN_ATTRIB);
-    INEVT_MASK_DUMP(IN_CLOSE_WRITE);
-    INEVT_MASK_DUMP(IN_CLOSE_NOWRITE);
-    INEVT_MASK_DUMP(IN_OPEN);
-    INEVT_MASK_DUMP(IN_MOVED_FROM);
-    INEVT_MASK_DUMP(IN_MOVED_TO);
-    INEVT_MASK_DUMP(IN_CREATE);
-    INEVT_MASK_DUMP(IN_DELETE);
-    INEVT_MASK_DUMP(IN_DELETE_SELF);
-    INEVT_MASK_DUMP(IN_MOVE_SELF);
-    buf[strlen(buf) - 1] = ')';
+//     snprintf(buf, sizeof(buf), "mask = %d (", mask);
+//     INEVT_MASK_DUMP(IN_ACCESS);
+//     INEVT_MASK_DUMP(IN_MODIFY);
+//     INEVT_MASK_DUMP(IN_ATTRIB);
+//     INEVT_MASK_DUMP(IN_CLOSE_WRITE);
+//     INEVT_MASK_DUMP(IN_CLOSE_NOWRITE);
+//     INEVT_MASK_DUMP(IN_OPEN);
+//     INEVT_MASK_DUMP(IN_MOVED_FROM);
+//     INEVT_MASK_DUMP(IN_MOVED_TO);
+//     INEVT_MASK_DUMP(IN_CREATE);
+//     INEVT_MASK_DUMP(IN_DELETE);
+//     INEVT_MASK_DUMP(IN_DELETE_SELF);
+//     INEVT_MASK_DUMP(IN_MOVE_SELF);
+//     buf[strlen(buf) - 1] = ')';
 
-    return (buf);
+//     return (buf);
+    return "";
 }
 
-static char *
+static const char *
 inotify_event_dump(struct inotify_event *evt)
 {
-    static __thread char buf[1024];
+    // static char __thread buf[1024];
 
-    snprintf(buf, sizeof(buf), "wd=%d mask=%s", 
-            evt->wd,
-            inotify_mask_dump(evt->mask));
+    // snprintf(buf, sizeof(buf), "wd=%d mask=%s", 
+    //         evt->wd,
+    //         inotify_mask_dump(evt->mask));
 
-    return (buf);
+    // return (buf);
+    return "";
 }
 
-#endif /* !NDEBUG */
+static int
+fd_to_path(char *buf, size_t bufsz, int fd)
+{
+    char path[1024];    //TODO: Maxpathlen, etc.
+
+    if (snprintf(&path[0], sizeof(path), "/proc/%d/fd/%d", getpid(), fd) < 0)
+        return (-1);
+
+    memset(buf, 0, bufsz);
+    return (readlink(path, buf, bufsz));
+}
 
 
 /* TODO: USE this to get events with name field */
 int
-get_one_event(struct inotify_event *dst, int inofd)
+get_one_event(struct inotify_event *dst, int pfd)
 {
     ssize_t n;
 
     dbg_puts("reading one inotify event");
     for (;;) {
-        n = read(inofd, dst, sizeof(*dst));
+        n = read(pfd, dst, sizeof(*dst));
         if (n < 0) {
             if (errno == EINTR)
-                continue;
+                return (-EINTR);
             dbg_perror("read");
             return (-1);
         } else {
             break;
         }
     }
-    dbg_printf("read(2) from inotify wd: %ld bytes", (long) n);
+    dbg_printf("read(2) from inotify wd: %lu bytes", (long) n);
 
     /* FIXME-TODO: if len > 0, read(len) */
     if (dst->len != 0) 
@@ -90,13 +120,11 @@ get_one_event(struct inotify_event *dst, int inofd)
 static int
 add_watch(struct filter *filt, struct knote *kn)
 {
-    struct epoll_event ev;
-    int ifd;
     char path[PATH_MAX];
     uint32_t mask;
 
     /* Convert the fd to a pathname */
-    if (linux_fd_to_path(&path[0], sizeof(path), kn->kev.ident) < 0)
+    if (fd_to_path(&path[0], sizeof(path), kn->kev.ident) < 0)
         return (-1);
 
     /* Convert the fflags to the inotify mask */
@@ -115,124 +143,133 @@ add_watch(struct filter *filt, struct knote *kn)
     if (kn->kev.flags & EV_ONESHOT)
         mask |= IN_ONESHOT;
 
-    /* Create an inotify descriptor */
-    ifd = inotify_init();
-    if (ifd < 0) {
-        dbg_perror("inotify_init(2)");
+    dbg_printf("inotify_add_watch(2); inofd=%d, %s, path=%s", 
+            filt->kf_pfd, inotify_mask_dump(mask), path);
+    kn->kev.data = inotify_add_watch(filt->kf_pfd, path, mask);
+    if (kn->kev.data < 0) {
+        dbg_printf("inotify_add_watch(2): %s", strerror(errno));
         return (-1);
     }
-
-    /* Add the watch */
-    dbg_printf("inotify_add_watch(2); inofd=%d, %s, path=%s", 
-            ifd, inotify_mask_dump(mask), path);
-    kn->kev.data = inotify_add_watch(ifd, path, mask);
-    if (kn->kev.data < 0) {
-        dbg_perror("inotify_add_watch(2)");
-        goto errout;
-    }
-
-    /* Add the inotify fd to the epoll set */
-    memset(&ev, 0, sizeof(ev));
-    ev.events = EPOLLIN;
-    ev.data.ptr = kn;
-    if (epoll_ctl(filter_epfd(filt), EPOLL_CTL_ADD, ifd, &ev) < 0) {
-        dbg_perror("epoll_ctl(2)");
-        goto errout;
-    }
-
-    kn->kdata.kn_inotifyfd = ifd;
-
     return (0);
-
-errout:
-    kn->kdata.kn_inotifyfd = -1;
-    (void) close(ifd);
-    return (-1);
 }
 
 static int
 delete_watch(struct filter *filt, struct knote *kn)
 {
-    int ifd = kn->kdata.kn_inotifyfd;
-
-    if (ifd < 0)
+    if (kn->kev.data < 0)
         return (0);
-    if (epoll_ctl(filter_epfd(filt), EPOLL_CTL_DEL, ifd, NULL) < 0) {
-        dbg_perror("epoll_ctl(2)");
+    if (inotify_rm_watch(filt->kf_pfd, kn->kev.data) < 0) {
+        dbg_printf("inotify_rm_watch(2): %s", strerror(errno));
         return (-1);
     }
-    (void) close(ifd);
-    kn->kdata.kn_inotifyfd = -1;
+    dbg_printf("wd %d removed", (int) kn->kev.data);
+    kn->kev.data = -1;
 
     return (0);
 }
 
 int
-evfilt_vnode_copyout(struct kevent *dst, struct knote *src, void *ptr UNUSED)
+evfilt_vnode_init(struct filter *filt)
+{
+    filt->kf_pfd = inotify_init();
+    dbg_printf("inotify fd = %d", filt->kf_pfd);
+    if (filt->kf_pfd < 0)
+        return (-1);
+
+    return (0);
+}
+
+void
+evfilt_vnode_destroy(struct filter *filt)
+{
+    close(filt->kf_pfd);
+}
+
+int
+evfilt_vnode_copyout(struct filter *filt, 
+            struct kevent *dst, 
+            int nevents)
 {
     struct inotify_event evt;
     struct stat sb;
+    struct knote *kn;
 
-    if (get_one_event(&evt, src->kdata.kn_inotifyfd) < 0)
+    if (get_one_event(&evt, filt->kf_pfd) < 0)
         return (-1);
 
     dbg_printf("inotify event: %s", inotify_event_dump(&evt));
     if (evt.mask & IN_IGNORED) {
         /* TODO: possibly return error when fs is unmounted */
-        dst->filter = 0;
         return (0);
     }
 
-    /* Check if the watched file has been closed, and 
-       XXX-this may not exactly match the kevent() behavior if multiple file de
-scriptors reference the same file.
-    */
+    /* Check if the watched file has been closed 
+       XXX-this may not exactly match the kevent() behavior if multiple file descriptors reference the same file.
+     */
     if (evt.mask & IN_CLOSE_WRITE || evt.mask & IN_CLOSE_NOWRITE) {
-        src->kn_flags |= EV_ONESHOT; /* KLUDGE: causes the knote to be deleted */
-        dst->filter = 0; /* KLUDGE: causes the event to be discarded */
+        kn = knote_lookup_data(filt, evt.wd);
+        if (kn != NULL)  {
+            delete_watch(filt, kn);
+            knote_free(filt, kn);
+        }
         return (0);
     }
 
-    memcpy(dst, &src->kev, sizeof(*dst));
+    kn = knote_lookup_data(filt, evt.wd);
+    if (kn == NULL) {
+        dbg_printf("no match for wd # %d", evt.wd);
+        /* Assume that we called delete_watch() while there were pending events.. */
+        return (0);
+    }
+
+    memcpy(dst, &kn->kev, sizeof(*dst));
     dst->data = 0;
 
     /* No error checking because fstat(2) should rarely fail */
     //FIXME: EINTR
     if ((evt.mask & IN_ATTRIB || evt.mask & IN_MODIFY) 
-        && fstat(src->kev.ident, &sb) == 0) {
-        if (sb.st_nlink == 0 && src->kev.fflags & NOTE_DELETE) 
+        && fstat(kn->kev.ident, &sb) == 0) {
+        if (sb.st_nlink == 0 && kn->kev.fflags & NOTE_DELETE) 
             dst->fflags |= NOTE_DELETE;
-        if (sb.st_nlink != src->data.vnode.nlink && src->kev.fflags & NOTE_LINK) 
+        if (sb.st_nlink != kn->data.vnode.nlink && kn->kev.fflags & NOTE_LINK) 
             dst->fflags |= NOTE_LINK;
 #if HAVE_NOTE_TRUNCATE
-        if (sb.st_nsize == 0 && src->kev.fflags & NOTE_TRUNCATE) 
+        if (sb.st_nsize == 0 && kn->kev.fflags & NOTE_TRUNCATE) 
             dst->fflags |= NOTE_TRUNCATE;
 #endif
-        if (sb.st_size > src->data.vnode.size && src->kev.fflags & NOTE_WRITE) 
+        if (sb.st_size > kn->data.vnode.size && kn->kev.fflags & NOTE_WRITE) 
             dst->fflags |= NOTE_EXTEND;
-       src->data.vnode.nlink = sb.st_nlink;
-       src->data.vnode.size = sb.st_size;
+       kn->data.vnode.nlink = sb.st_nlink;
+       kn->data.vnode.size = sb.st_size;
     }
 
-    if (evt.mask & IN_MODIFY && src->kev.fflags & NOTE_WRITE) 
+    if (evt.mask & IN_MODIFY && kn->kev.fflags & NOTE_WRITE) 
         dst->fflags |= NOTE_WRITE;
-    if (evt.mask & IN_ATTRIB && src->kev.fflags & NOTE_ATTRIB) 
+    if (evt.mask & IN_ATTRIB && kn->kev.fflags & NOTE_ATTRIB) 
         dst->fflags |= NOTE_ATTRIB;
-    if (evt.mask & IN_MOVE_SELF && src->kev.fflags & NOTE_RENAME) 
+    if (evt.mask & IN_MOVE_SELF && kn->kev.fflags & NOTE_RENAME) 
         dst->fflags |= NOTE_RENAME;
-    if (evt.mask & IN_DELETE_SELF && src->kev.fflags & NOTE_DELETE) 
+    if (evt.mask & IN_DELETE_SELF && kn->kev.fflags & NOTE_DELETE) 
         dst->fflags |= NOTE_DELETE;
 
-    if (evt.mask & IN_MODIFY && src->kev.fflags & NOTE_WRITE) 
+    if (evt.mask & IN_MODIFY && kn->kev.fflags & NOTE_WRITE) 
         dst->fflags |= NOTE_WRITE;
-    if (evt.mask & IN_ATTRIB && src->kev.fflags & NOTE_ATTRIB) 
+    if (evt.mask & IN_ATTRIB && kn->kev.fflags & NOTE_ATTRIB) 
         dst->fflags |= NOTE_ATTRIB;
-    if (evt.mask & IN_MOVE_SELF && src->kev.fflags & NOTE_RENAME) 
+    if (evt.mask & IN_MOVE_SELF && kn->kev.fflags & NOTE_RENAME) 
         dst->fflags |= NOTE_RENAME;
-    if (evt.mask & IN_DELETE_SELF && src->kev.fflags & NOTE_DELETE) 
+    if (evt.mask & IN_DELETE_SELF && kn->kev.fflags & NOTE_DELETE) 
         dst->fflags |= NOTE_DELETE;
 
-    return (0);
+    if (kn->kev.flags & EV_DISPATCH) {
+        delete_watch(filt, kn); /* TODO: error checking */
+        KNOTE_DISABLE(kn);
+    } else if (kn->kev.flags & EV_ONESHOT) {
+        delete_watch(filt, kn); /* TODO: error checking */
+        knote_free(filt, kn);
+    }
+            
+    return (1);
 }
 
 int
@@ -255,9 +292,6 @@ int
 evfilt_vnode_knote_modify(struct filter *filt, struct knote *kn, 
         const struct kevent *kev)
 {
-    (void)filt;
-    (void)kn;
-    (void)kev;
     return (-1); /* FIXME - STUB */
 }
 
@@ -281,8 +315,8 @@ evfilt_vnode_knote_disable(struct filter *filt, struct knote *kn)
 
 const struct filter evfilt_vnode = {
     EVFILT_VNODE,
-    NULL,
-    NULL,
+    evfilt_vnode_init,
+    evfilt_vnode_destroy,
     evfilt_vnode_copyout,
     evfilt_vnode_knote_create,
     evfilt_vnode_knote_modify,

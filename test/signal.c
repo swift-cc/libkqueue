@@ -16,49 +16,50 @@
 
 #include "common.h"
 
+static int __thread kqfd;
+
 void
-test_kevent_signal_add(struct test_context *ctx)
+test_kevent_signal_add(void)
 {
     struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
 }
 
 void
-test_kevent_signal_get(struct test_context *ctx)
+test_kevent_signal_get(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);    
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);    
 
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
 
     kev.flags |= EV_CLEAR;
     kev.data = 1;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 }
 
 void
-test_kevent_signal_disable(struct test_context *ctx)
+test_kevent_signal_disable(void)
 {
     struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DISABLE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DISABLE, 0, 0, NULL);
 
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 void
-test_kevent_signal_enable(struct test_context *ctx)
+test_kevent_signal_enable(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ENABLE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ENABLE, 0, 0, NULL);
 
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
@@ -69,126 +70,120 @@ test_kevent_signal_enable(struct test_context *ctx)
 #else
     kev.data = 2; // one extra time from test_kevent_signal_disable()
 #endif
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Delete the watch */
     kev.flags = EV_DELETE;
-    if (kevent(ctx->kqfd, &kev, 1, NULL, 0, NULL) < 0)
+    if (kevent(kqfd, &kev, 1, NULL, 0, NULL) < 0)
         die("kevent");
 }
 
 void
-test_kevent_signal_del(struct test_context *ctx)
+test_kevent_signal_del(void)
 {
     struct kevent kev;
   
     /* Delete the kevent */
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DELETE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DELETE, 0, 0, NULL);
 
     signal(SIGUSR1, SIG_IGN);
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 void
-test_kevent_signal_oneshot(struct test_context *ctx)
+test_kevent_signal_oneshot(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD | EV_ONESHOT, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD | EV_ONESHOT, 0, 0, NULL);
 
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
 
     kev.flags |= EV_CLEAR;
     kev.data = 1;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Send another one and make sure we get no events */
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
 
 void
-test_kevent_signal_modify(struct test_context *ctx)
+test_kevent_signal_modify(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, ((void *)-1));
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, ((void *)-1));
 
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
 
     kev.flags |= EV_CLEAR;
     kev.data = 1;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
-
-    test_kevent_signal_del(ctx);
+    kevent_cmp(&kev, kevent_get(kqfd));
 }
 
-#ifdef EV_DISPATCH
+#if HAVE_EV_DISPATCH
 void
-test_kevent_signal_dispatch(struct test_context *ctx)
+test_kevent_signal_dispatch(void)
 {
-    struct kevent kev, ret;
+    struct kevent kev;
 
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ADD | EV_CLEAR | EV_DISPATCH, 0, 0, NULL);
 
     /* Get one event */
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
     kev.data = 1;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Confirm that the knote is disabled */
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 
     /* Enable the knote and make sure no events are pending */
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ENABLE | EV_DISPATCH, 0, 0, NULL);
-    test_no_kevents(ctx->kqfd);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_ENABLE | EV_DISPATCH, 0, 0, NULL);
+    test_no_kevents(kqfd);
 
     /* Get the next event */
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
     kev.flags = EV_ADD | EV_CLEAR | EV_DISPATCH;
     kev.data = 1;
-    kevent_get(&ret, ctx->kqfd);
-    kevent_cmp(&kev, &ret);
+    kevent_cmp(&kev, kevent_get(kqfd));
 
     /* Remove the knote and ensure the event no longer fires */
-    kevent_add(ctx->kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DELETE, 0, 0, NULL);
+    kevent_add(kqfd, &kev, SIGUSR1, EVFILT_SIGNAL, EV_DELETE, 0, 0, NULL);
     if (kill(getpid(), SIGUSR1) < 0)
         die("kill");
-    test_no_kevents(ctx->kqfd);
+    test_no_kevents(kqfd);
 }
-#endif  /* EV_DISPATCH */
+#endif  /* HAVE_EV_DISPATCH */
 
 void
-test_evfilt_signal(struct test_context *ctx)
+test_evfilt_signal(int _kqfd)
 {
     signal(SIGUSR1, SIG_IGN);
 
-    test(kevent_signal_add, ctx);
-    test(kevent_signal_del, ctx);
-    test(kevent_signal_get, ctx);
-    test(kevent_signal_disable, ctx);
-    test(kevent_signal_enable, ctx);
-    test(kevent_signal_oneshot, ctx);
-    test(kevent_signal_modify, ctx);
-#ifdef EV_DISPATCH
-    test(kevent_signal_dispatch, ctx);
+	kqfd = _kqfd;
+    test(kevent_signal_add);
+    test(kevent_signal_del);
+    test(kevent_signal_get);
+    test(kevent_signal_disable);
+    test(kevent_signal_enable);
+    test(kevent_signal_oneshot);
+    test(kevent_signal_modify);
+#if HAVE_EV_DISPATCH
+    test(kevent_signal_dispatch);
 #endif
 }

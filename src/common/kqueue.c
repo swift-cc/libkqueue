@@ -14,158 +14,225 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "../../config.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/queue.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <string.h>
+#include <unistd.h>
 
+#include "sys/event.h"
 #include "private.h"
 
-int DEBUG_KQUEUE = 0;
-const char *KQUEUE_DEBUG_IDENT = "KQ";
-
-#ifdef _WIN32
-static LONG kq_init_begin = 0;
-static int kq_init_complete = 0;
-#else
-pthread_mutex_t kq_mtx = PTHREAD_MUTEX_INITIALIZER;
-pthread_once_t kq_is_initialized = PTHREAD_ONCE_INIT;
+#ifndef NDEBUG
+int KQUEUE_DEBUG = 0;
 #endif
 
-static unsigned int
-get_fd_limit(void)
-{
-#ifdef _WIN32
-    /* actually windows should be able to hold
-       way more, as they use HANDLEs for everything.
-       Still this number should still be sufficient for
-       the provided number of kqueue fds.
-       */
-    return 65536;
-#else
-    struct rlimit rlim;
-    
-    if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
-        dbg_perror("getrlimit(2)");
-        return (65536);
-    } else {
-        return (rlim.rlim_max);
-    }
-#endif
-}
+static RB_HEAD(kqt, kqueue) kqtree       = RB_INITIALIZER(&kqtree);
+static pthread_rwlock_t     kqtree_mtx   = PTHREAD_RWLOCK_INITIALIZER;
 
-static struct map *kqmap;
-
-void
-libkqueue_init(void)
-{
-#ifdef NDEBUG
-    DEBUG_KQUEUE = 0;
-#else
-    char *s = getenv("KQUEUE_DEBUG");
-    if (s != NULL && strlen(s) > 0) {
-        DEBUG_KQUEUE = 1;
-
-#ifdef _WIN32
-    /* Initialize the Winsock library */
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) 
-        abort();
-#endif
-
-# if defined(_WIN32) && !defined(__GNUC__)
-	/* Enable heap surveillance */
-	{
-		int tmpFlag = _CrtSetDbgFlag( _CRTDBG_REPORT_FLAG );
-		tmpFlag |= _CRTDBG_CHECK_ALWAYS_DF;
-		_CrtSetDbgFlag(tmpFlag);
-	}
-# endif /* _WIN32 */
-    }
-#endif
-
-   kqmap = map_new(get_fd_limit()); // INT_MAX
-   if (kqmap == NULL)
-       abort(); 
-   if (knote_init() < 0)
-       abort();
-   dbg_puts("library initialization complete");
-#ifdef _WIN32
-   kq_init_complete = 1;
-#endif
-}
-
-#if DEADWOOD
 static int
 kqueue_cmp(struct kqueue *a, struct kqueue *b)
 {
-    return memcmp(&a->kq_id, &b->kq_id, sizeof(int)); 
+    return memcmp(&a->kq_sockfd[1], &b->kq_sockfd[1], sizeof(int)); 
 }
 
+RB_GENERATE(kqt, kqueue, entries, kqueue_cmp)
+
 /* Must hold the kqtree_mtx when calling this */
-void
+static void
 kqueue_free(struct kqueue *kq)
 {
     RB_REMOVE(kqt, &kqtree, kq);
     filter_unregister_all(kq);
-    kqops.kqueue_free(kq);
+#if defined(__sun__)
+    port_event_t *pe = (port_event_t *) pthread_getspecific(kq->kq_port_event);
+
+    if (kq->kq_port > 0) 
+        close(kq->kq_port);
+    free(pe);
+#endif
     free(kq);
 }
 
-#endif
-
-struct kqueue *
-kqueue_lookup(int kq)
+static int
+kqueue_gc(void)
 {
-    return ((struct kqueue *) map_lookup(kqmap, kq));
-}
+    int rv;
+    struct kqueue *n1, *n2;
 
-int VISIBLE
-kqueue(void)
-{
-	struct kqueue *kq;
-    struct kqueue *tmp;
+    /* Free any kqueue descriptor that is no longer needed */
+    /* Sadly O(N), however needed in the case that a descriptor is
+       closed and kevent(2) will never again be called on it. */
+    for (n1 = RB_MIN(kqt, &kqtree); n1 != NULL; n1 = n2) {
+        n2 = RB_NEXT(kqt, &kqtree, n1);
 
-#ifdef _WIN32
-    if (InterlockedCompareExchange(&kq_init_begin, 0, 1) == 0) {
-        libkqueue_init();
-    } else {
-        while (kq_init_complete == 0) {
-            sleep(1);
+        if (n1->kq_ref == 0) {
+            kqueue_free(n1);
+        } else {
+            rv = kqueue_validate(n1);
+            if (rv == 0) 
+                kqueue_free(n1);
+            else if (rv < 0) 
+                return (-1);
         }
     }
-#else
-    (void) pthread_mutex_lock(&kq_mtx);
-    (void) pthread_once(&kq_is_initialized, libkqueue_init);
-    (void) pthread_mutex_unlock(&kq_mtx);
+
+    return (0);
+}
+
+
+int
+kqueue_validate(struct kqueue *kq)
+{
+    int rv;
+    char buf[1];
+    struct pollfd pfd;
+
+    pfd.fd = kq->kq_sockfd[0];
+    pfd.events = POLLIN | POLLHUP;
+    pfd.revents = 0;
+
+    rv = poll(&pfd, 1, 0);
+    if (rv == 0)
+        return (1);
+    if (rv < 0) {
+        dbg_perror("poll(2)");
+        return (-1);
+    }
+    if (rv > 0) {
+        /* NOTE: If the caller accidentally writes to the kqfd, it will
+                 be considered invalid. */
+        rv = recv(kq->kq_sockfd[0], buf, sizeof(buf), MSG_PEEK | MSG_DONTWAIT);
+        if (rv == 0) 
+            return (0);
+        else
+            return (-1);
+    }
+
+    return (0);
+}
+
+void
+kqueue_put(struct kqueue *kq)
+{
+    atomic_dec(&kq->kq_ref);
+}
+
+struct kqueue *
+kqueue_get(int kq)
+{
+    struct kqueue query;
+    struct kqueue *ent = NULL;
+
+    query.kq_sockfd[1] = kq;
+    pthread_rwlock_rdlock(&kqtree_mtx);
+    ent = RB_FIND(kqt, &kqtree, &query);
+    pthread_rwlock_unlock(&kqtree_mtx);
+
+    /* Check for invalid kqueue objects still in the tree */
+    if (ent != NULL) {
+        if (ent->kq_sockfd[0] < 0 || ent->kq_ref == 0) {
+            ent = NULL;
+        } else {
+            atomic_inc(&ent->kq_ref);
+        }
+    }
+
+    return (ent);
+}
+
+/* Non-portable kqueue initalization code. */
+static int
+kqueue_sys_init(struct kqueue *kq)
+{
+#if defined(__sun__)
+    port_event_t *pe;
+
+    if ((kq->kq_port = port_create()) < 0) {
+        dbg_perror("port_create(2)");
+        return (-1);
+    }
+    if (pthread_key_create(&kq->kq_port_event, NULL) != 0)
+       abort();
+    if ((pe = calloc(1, sizeof(*pe))) == NULL) 
+       abort();
+    if (pthread_setspecific(kq->kq_port_event, pe) != 0)
+       abort();
+#endif
+    return (0);
+}
+
+int __attribute__((visibility("default")))
+kqueue(void)
+{
+    struct kqueue *kq;
+    int tmp;
+
+#ifndef __ANDROID__
+    int cancelstate;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancelstate) != 0)
+        return (-1);
 #endif
 
     kq = (struct kqueue *)calloc(1, sizeof(*kq));
     if (kq == NULL)
         return (-1);
+    kq->kq_ref = 1;
+    pthread_mutex_init(&kq->kq_mtx, NULL);
 
-	tracing_mutex_init(&kq->kq_mtx, NULL);
+#ifdef NDEBUG
+    KQUEUE_DEBUG = 0;
+#else
+    KQUEUE_DEBUG = (getenv("KQUEUE_DEBUG") == NULL) ? 0 : 1;
+#endif
 
-    if (kqops.kqueue_init(kq) < 0) {
-        free(kq);
-        return (-1);
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, kq->kq_sockfd) < 0) 
+        goto errout_unlocked;
+
+    if (kqueue_sys_init(kq) < 0)
+        goto errout_unlocked;
+
+    pthread_rwlock_wrlock(&kqtree_mtx);
+    if (kqueue_gc() < 0)
+        goto errout;
+    /* TODO: move outside of the lock if it is safe */
+    if (filter_register_all(kq) < 0)
+        goto errout;
+    RB_INSERT(kqt, &kqtree, kq);
+    pthread_rwlock_unlock(&kqtree_mtx);
+
+    dbg_printf("created kqueue, fd=%d", kq->kq_sockfd[1]);
+#ifndef __ANDROID__
+    (void) pthread_setcancelstate(cancelstate, NULL);
+#endif
+
+    return (kq->kq_sockfd[1]);
+
+errout:
+    pthread_rwlock_unlock(&kqtree_mtx);
+
+errout_unlocked:
+    if (kq->kq_sockfd[0] != kq->kq_sockfd[1]) {
+        tmp = errno;
+        (void)close(kq->kq_sockfd[0]);
+        (void)close(kq->kq_sockfd[1]);
+        errno = tmp;
     }
-
-    dbg_printf("created kqueue, fd=%d", kq->kq_id);
-
-    tmp = (struct kqueue *)map_delete(kqmap, kq->kq_id);
-    if (tmp != NULL) {
-        dbg_puts("FIXME -- memory leak here");
-        // TODO: kqops.kqueue_free(tmp), or (better yet) decrease it's refcount
-    }
-    if (map_insert(kqmap, kq->kq_id, kq) < 0) {
-        dbg_puts("map insertion failed");
-        kqops.kqueue_free(kq);
-        return (-1);
-    }
-
-    return (kq->kq_id);
+#if defined(__sun__)
+    if (kq->kq_port > 0) 
+	close(kq->kq_port);
+#endif
+    free(kq);
+#ifndef __ANDROID__
+    (void) pthread_setcancelstate(cancelstate, NULL);
+#endif
+    return (-1);
 }

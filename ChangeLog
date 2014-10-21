@@ -1,57 +1,68 @@
-UNRELEASED  HEAD
+2012-06-14  v1.1  r?
 ------------------------------------------------------------------------
 
-  * Fix a build failure on mips64el.
-    (Credit: YunQiang Su, from Debian Bug #754376)
+  * Switch the build system to Makeconf
 
-2014-03-09  v2.0.3 
-------------------------------------------------------------------------
-
-  * Fix the generation of libkqueue.pc
-
-2014-02-23  v2.0.2 
-------------------------------------------------------------------------
-
-  * Switch from SVN to Git
-  * Switch hosting providers to Github
-  * Switch to autoconf/automake
-
-2013-05-08  v2.0.1  r646
-------------------------------------------------------------------------
-
-  * Improvements to the RPM package spec
-    (Credit: Eric Wong)
-
-2013-04-29  v2.0  r639
-------------------------------------------------------------------------
-
-  * Use ppoll(2) where possible to improve scalability.
-    (Credit: Eric Wong)
-
-  * Optimize kevent() when it is called with a zero timeout.
-    (Credit: Eric Wong)
-
-  * Avoid calling getsockopt() on file descriptors that are not sockets.
-    (Credit: Eric Wong)
-
-  * Call epoll_wait after linux_kevent_wait_hires()
-    (Credit: Eric Wong)
-
-  * Detect regular files correctly 
-    (Credit: Eric Wong)
+  * Add support for cross-compiling for Android
 
   * Ensure that calling close() on a file descriptor will remove any 
-    kevents that reference the descriptor. [merged from ^/branches/stable@551]
+    knotes that reference the descriptor.
+    Thanks to Eric Radman for reporting this bug.
 
-  * Remove the SERIALIZE_KEVENT macro, and always protect kevent_copyin() 
-    and kevent_copyout() with a mutex.
+  * Disable thread cancellation while running kqueue() and kevent().
 
-  * Remove fine-grained locking at the knote level.
+  * Fix a race condition in kevent_wait() by holding the kqueue lock
+    for the duration of the kevent() function call. To avoid going to
+    sleep with the lock, it is dropped temporarily before calling 
+    pselect() or similar system calls.
+    Thanks to Eric Wong for reporting this bug.
 
-  * Add a counter that increments on each each kevent() call. When printing
-  debug information within kevent(), display the value of the counter.
-  This will be helpful when debugging a multithreaded program that may have
-  multiple kevent() calls executing in parallel.    (Credit: Julien Blache)
+  * Fix signal handling by returning EINTR from kevent() instead of
+    silently ignoring the signal.
+
+  * Fix: attempting to trigger identical events will corrupt the TAILQ
+    structure and lead to a segfault. 
+    Thanks to Eric Wong for reporting this bug and providing a patch.
+
+2012-04-19  v1.0.6  r539
+------------------------------------------------------------------------
+
+  * Do not check if an unsigned integer is less than zero.
+  
+  * Prevent truncation of the `ident' argument by knote_lookup().
+    Backport of r524 from the trunk.
+    Thanks to Eric Wong for reporting this bug.
+
+2012-02-09  v1.0.5  r534
+------------------------------------------------------------------------
+
+  * Fix a crash in kevent() if an invalid kqueue descriptor is provided.
+    Thanks to James William Pye for reporting this bug.
+  * Backport kevent_test() to check for a bad kqueue descriptor.
+  * Support multiarch header locations in Debian.
+
+2011-07-13  v1.0.4  r530
+------------------------------------------------------------------------
+
+  * Revert the change to use /usr/lib64 on 64-bit hosts because it breaks
+    on Debian.
+
+2011-07-09  v1.0.3  r529
+------------------------------------------------------------------------
+
+  * Don't allow the user to override essential CFLAGS such as -fpic
+  * Add _BSD_SOURCE to CFLAGS
+
+2011-03-24  v1.0.2  r462
+------------------------------------------------------------------------
+
+  * When building on a 64-bit Linux host, install libraries in /usr/lib64.
+
+2010-09-18  v1.0.1  r453
+------------------------------------------------------------------------
+
+  * Eliminate an unused assignment in signal_handler() and 
+    evfilt_signal_copyout(). Fixes a build failure on Fedora.
 
 2010-09-18  v1.0  r344
 ------------------------------------------------------------------------

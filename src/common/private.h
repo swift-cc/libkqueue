@@ -17,64 +17,91 @@
 #ifndef  _KQUEUE_PRIVATE_H
 #define  _KQUEUE_PRIVATE_H
 
+#if defined (__SVR4) && defined (__sun)
+# define SOLARIS
+# include <port.h>
+  /* Used to set portev_events for PORT_SOURCE_USER */
+# define X_PORT_SOURCE_SIGNAL  101
+# define X_PORT_SOURCE_USER    102
+#endif
+
 #include <errno.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include "config.h"
+#include <sys/select.h>
+#include "../../include/sys/event.h"
+
 #include "tree.h"
+
+/* GCC atomic builtins. 
+ * See: http://gcc.gnu.org/onlinedocs/gcc-4.1.0/gcc/Atomic-Builtins.html 
+ */
+#ifdef __sun
+# include <atomic.h>
+# define atomic_inc      atomic_inc_32
+# define atomic_dec      atomic_dec_32
+#else
+# define atomic_inc(p)   __sync_add_and_fetch((p), 1)
+# define atomic_dec(p)   __sync_sub_and_fetch((p), 1)
+#endif
 
 /* Maximum events returnable in a single kevent() call */
 #define MAX_KEVENT  512
 
-struct kqueue;
-struct kevent;
-struct knote;
-struct map;
-struct eventfd;
-struct evfilt_data;
-
-#if defined(_WIN32)
-# include "../windows/platform.h"
-# include "../common/queue.h"
-# if !defined(NDEBUG) && !defined(__GNUC__)
-#  include <crtdbg.h>
-# endif
-#elif defined(__linux__)
-# include "../posix/platform.h"
-# include "../linux/platform.h"
-#elif defined(__sun)
-# include "../posix/platform.h"
-# include "../solaris/platform.h"
-#else
-# error Unknown platform
-#endif
-
-#include "debug.h"
-
 /* Workaround for Android */
 #ifndef EPOLLONESHOT
-# define EPOLLONESHOT (1 << 30)
+#define EPOLLONESHOT (1 << 30)
 #endif
 
-struct eventfd {
-    int ef_id;
-#if defined(EVENTFD_PLATFORM_SPECIFIC)
-    EVENTFD_PLATFORM_SPECIFIC;
-#endif
-};
+#ifndef NDEBUG
+
+extern int KQUEUE_DEBUG;
+
+#define dbg_puts(str)           do {                                \
+    if (KQUEUE_DEBUG)                                               \
+      fprintf(stderr, "KQ: %s(): %s\n", __func__,str);              \
+} while (0)
+
+#define dbg_printf(fmt,...)     do {                                \
+    if (KQUEUE_DEBUG)                                               \
+      fprintf(stderr, "KQ: %s(): " fmt"\n", __func__,__VA_ARGS__);   \
+} while (0)
+
+#define dbg_perror(str)         do {                                \
+    if (KQUEUE_DEBUG)                                               \
+      fprintf(stderr, "KQ: %s(): %s: %s (errno=%d)\n",              \
+              __func__, str, strerror(errno), errno);               \
+} while (0)
+
+# define reset_errno()          do { errno = 0; } while (0)
+
+#else /* NDEBUG */
+# define dbg_puts(str)           ;
+# define dbg_printf(fmt,...)     ;
+# define dbg_perror(str)         ;
+# define reset_errno()           ;
+#endif 
+
+
+struct kqueue;
+struct kevent;
+struct evfilt_data;
+struct sleepreq;
 
 /* 
- * Flags used by knote->kn_flags
+ * Flags used by knote->flags
  */
 #define KNFL_PASSIVE_SOCKET  (0x01)  /* Socket is in listen(2) mode */
-#define KNFL_REGULAR_FILE    (0x02)  /* File descriptor is a regular file */
-#define KNFL_KNOTE_DELETED   (0x10)  /* The knote object is no longer valid */
- 
+
+/* TODO: Make this a variable length structure and allow
+   each filter to add custom fields at the end.
+ */
 struct knote {
     struct kevent     kev;
-    int               kn_flags;       
+    int               flags;       
     union {
-        /* OLD */
         int           pfd;       /* Used by timerfd */
         int           events;    /* Used by socket */
         struct {
@@ -83,15 +110,11 @@ struct knote {
         } vnode;
         timer_t       timerid;  
         struct sleepreq *sleepreq; /* Used by posix/timer.c */
-		void          *handle;      /* Used by win32 filters */
     } data;
-	struct kqueue*	   kn_kq;
-    volatile uint32_t  kn_ref;
-#if defined(KNOTE_PLATFORM_SPECIFIC)
-    KNOTE_PLATFORM_SPECIFIC;
-#endif
-    RB_ENTRY(knote)   kn_entries;
+    TAILQ_ENTRY(knote) event_ent;    /* Used by filter->kf_event */
+    RB_ENTRY(knote)   kntree_ent;   /* Used by filter->kntree */
 };
+LIST_HEAD(knotelist, knote);
 
 #define KNOTE_ENABLE(ent)           do {                            \
             (ent)->kev.flags &= ~EV_DISABLE;                        \
@@ -108,7 +131,7 @@ struct filter {
 
     int     (*kf_init)(struct filter *);
     void    (*kf_destroy)(struct filter *);
-    int     (*kf_copyout)(struct kevent *, struct knote *, void *);
+    int     (*kf_copyout)(struct filter *, struct kevent *, int);
 
     /* knote operations */
 
@@ -119,112 +142,70 @@ struct filter {
     int     (*kn_enable)(struct filter *, struct knote *);
     int     (*kn_disable)(struct filter *, struct knote *);
 
-    struct eventfd kf_efd;             /* Used by user.c */
-
-    //MOVE TO POSIX?
+    struct eventfd *kf_efd;             /* Used by user.c */
     int       kf_pfd;                   /* fd to poll(2) for readiness */
     int       kf_wfd;                   /* fd to write when an event occurs */
-    //----?
-
+    sigset_t            kf_sigmask;
     struct evfilt_data *kf_data;	    /* filter-specific data */
     RB_HEAD(knt, knote) kf_knote;
-    pthread_rwlock_t    kf_knote_mtx;
+    TAILQ_HEAD(, knote) kf_event;       /* events that have occurred */
     struct kqueue      *kf_kqueue;
-#if defined(FILTER_PLATFORM_SPECIFIC)
-    FILTER_PLATFORM_SPECIFIC;
-#endif
 };
 
 /* Use this to declare a filter that is not implemented */
 #define EVFILT_NOTIMPL { 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 
 struct kqueue {
-    int             kq_id;
+    int             kq_sockfd[2];
     struct filter   kq_filt[EVFILT_SYSCOUNT];
     fd_set          kq_fds, kq_rfds; 
     int             kq_nfds;
-    tracing_mutex_t kq_mtx;
-    volatile uint32_t kq_ref;
-#if defined(KQUEUE_PLATFORM_SPECIFIC)
-    KQUEUE_PLATFORM_SPECIFIC;
+    pthread_mutex_t kq_mtx;
+#ifdef __sun__
+    int             kq_port;            /* see: port_create(2) */
+    pthread_key_t   kq_port_event;
 #endif
+    volatile uint32_t        kq_ref;
     RB_ENTRY(kqueue) entries;
 };
 
-struct kqueue_vtable {
-    int  (*kqueue_init)(struct kqueue *);
-    void (*kqueue_free)(struct kqueue *);
-    // @param timespec can be given as timeout
-    // @param int the number of events to wait for
-    // @param kqueue the queue to wait on
-	int  (*kevent_wait)(struct kqueue *, int, const struct timespec *);
-    // @param kqueue the queue to look at
-    // @param int The number of events that should be ready
-    // @param kevent the structure to copy the events into
-    // @param int The number of events to copy
-    // @return the actual number of events copied
-    int  (*kevent_copyout)(struct kqueue *, int, struct kevent *, int);
-    int  (*filter_init)(struct kqueue *, struct filter *);
-    void (*filter_free)(struct kqueue *, struct filter *);
-    int  (*eventfd_init)(struct eventfd *);
-    void (*eventfd_close)(struct eventfd *);
-    int  (*eventfd_raise)(struct eventfd *);
-    int  (*eventfd_lower)(struct eventfd *);
-    int  (*eventfd_descriptor)(struct eventfd *);
-};
-extern const struct kqueue_vtable kqops;
+struct knote *  knote_lookup(struct filter *, uintptr_t);
+struct knote *  knote_lookup_data(struct filter *filt, intptr_t);
+struct knote *  knote_new(void);
+void        knote_free(struct filter *, struct knote *);
+void        knote_free_all(struct filter *);
+void        knote_insert(struct filter *, struct knote *);
+int         knote_get_socket_type(struct knote *);
 
-/*
- * kqueue internal API
- */
-#define kqueue_lock(kq)     tracing_mutex_lock(&(kq)->kq_mtx)
-#define kqueue_unlock(kq)   tracing_mutex_unlock(&(kq)->kq_mtx)
+/* TODO: these deal with the eventlist, should use a different prefix */
+void        knote_enqueue(struct filter *, struct knote *);
+struct knote *  knote_dequeue(struct filter *);
+int         knote_events_pending(struct filter *);
 
-/*
- * knote internal API
- */
-struct knote * knote_lookup(struct filter *, uintptr_t);
-//DEADWOOD: struct knote * knote_get_by_data(struct filter *filt, intptr_t);
-struct knote * knote_new(void);
-#define knote_retain(kn) atomic_inc(&kn->kn_ref)
-void knote_release(struct knote *);
-void knote_insert(struct filter *, struct knote *);
-int  knote_delete(struct filter *, struct knote *);
-int  knote_init(void);
-int  knote_disable(struct filter *, struct knote *);
-#define knote_get_filter(knt) &((knt)->kn_kq->kq_filt[(knt)->kev.filter])
+struct eventfd * eventfd_create(void);
+void        eventfd_free(struct eventfd *);
+int         eventfd_raise(struct eventfd *);
+int         eventfd_lower(struct eventfd *);
+int         eventfd_reader(struct eventfd *);
+int         eventfd_writer(struct eventfd *);
 
 int         filter_lookup(struct filter **, struct kqueue *, short);
+int         filter_socketpair(struct filter *);
 int      	filter_register_all(struct kqueue *);
 void     	filter_unregister_all(struct kqueue *);
 const char *filter_name(short);
+int         filter_lower(struct filter *);
+int         filter_raise(struct filter *);
 
 int         kevent_wait(struct kqueue *, const struct timespec *);
 int         kevent_copyout(struct kqueue *, int, struct kevent *, int);
 void 		kevent_free(struct kqueue *);
 const char *kevent_dump(const struct kevent *);
-struct kqueue * kqueue_lookup(int);
+
+struct kqueue * kqueue_get(int);
+void        kqueue_put(struct kqueue *);
+#define     kqueue_lock(kq)     pthread_mutex_lock(&(kq)->kq_mtx)
+#define     kqueue_unlock(kq)   pthread_mutex_unlock(&(kq)->kq_mtx)
 int         kqueue_validate(struct kqueue *);
-
-struct map *map_new(size_t);
-int         map_insert(struct map *, int, void *);
-int         map_remove(struct map *, int, void *);
-int         map_replace(struct map *, int, void *, void *);
-void       *map_lookup(struct map *, int);
-void       *map_delete(struct map *, int);
-void        map_free(struct map *);
-
-/* DEADWOOD: No longer needed due to the un-smerging of POSIX and Linux
-
-int  posix_evfilt_user_init(struct filter *);
-void posix_evfilt_user_destroy(struct filter *);
-int  posix_evfilt_user_copyout(struct kevent *, struct knote *, void *ptr UNUSED);
-int  posix_evfilt_user_knote_create(struct filter *, struct knote *);
-int  posix_evfilt_user_knote_modify(struct filter *, struct knote *, const struct kevent *);
-int  posix_evfilt_user_knote_delete(struct filter *, struct knote *);
-int  posix_evfilt_user_knote_enable(struct filter *, struct knote *);
-int  posix_evfilt_user_knote_disable(struct filter *, struct knote *);
-
-*/
 
 #endif  /* ! _KQUEUE_PRIVATE_H */
